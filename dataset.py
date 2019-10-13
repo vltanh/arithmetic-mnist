@@ -2,7 +2,6 @@ import pandas as pd
 
 import torch
 from torch.utils import data
-from torchvision import transforms
 
 class MNISTDataset(data.Dataset):
     def __init__(self, path, is_train):

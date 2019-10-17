@@ -110,3 +110,5 @@ venv
 # data
 data/
 weights/
+features/
+visualization/

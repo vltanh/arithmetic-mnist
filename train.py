@@ -208,10 +208,10 @@ def main():
     
     # Define learning rate scheduler
     fe_scheduler = optim.lr_scheduler.ReduceLROnPlateau(fe_opt, 
-                                                        patience=5, 
+                                                        patience=3, 
                                                         verbose=True)
     cl_scheduler = optim.lr_scheduler.ReduceLROnPlateau(cl_opt, 
-                                                        patience=5, 
+                                                        patience=3, 
                                                         verbose=True)
 
     # Prepare logger
@@ -227,7 +227,7 @@ def main():
     # -----------------------------------------------------------------
     
     # Start training loop
-    nepochs = 30
+    nepochs = 50
     for epoch in range(nepochs):
         print('=' * 30)
         print('Epoch {:>3d}'.format(epoch))

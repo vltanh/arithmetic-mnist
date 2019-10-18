@@ -26,7 +26,7 @@ class MNISTDataset(data.Dataset):
             lbl = self.preprocess_label(self.labels[i])
             return inp, lbl
         else:
-            return inp
+            return inp, -1
 
     def __len__(self):
         return len(self.inputs)

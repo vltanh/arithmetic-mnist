@@ -75,7 +75,7 @@ def main():
     fe = get_network()
     fe = fe.to(dev)
 
-    pretrained = torch.load('weights/best_loss__.pth', map_location=dev_id)
+    pretrained = torch.load('weights/cl_best_loss.pth', map_location=dev_id)
     fe.load_state_dict(pretrained['fe_state_dict'])
 
     # Validate on val dataset

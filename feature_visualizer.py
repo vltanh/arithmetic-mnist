@@ -9,7 +9,7 @@ import pandas as pd
 data = pickle.load(open('features/val.dat', 'rb'))
 
 dimred = MDS(2)
-reduced_data = dimred.fit_transform(data['data'])
+reduced_data = dimred.fit_transform(data['features'])
 
 df = pd.DataFrame()
 df['x_1'] = reduced_data[:, 0]

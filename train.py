@@ -10,7 +10,7 @@ from torch import optim
 from torch.nn import functional as F
 
 from dataset import MNISTDataset
-from model import Classifier, FeatureExtractor
+from model import DifferenceClassifier, DigitClassifier, FeatureExtractor
 
 def get_dataset():
     datasets = dict()
@@ -33,7 +33,7 @@ def get_dataset():
     return dataloaders
 
 def get_network():
-    return FeatureExtractor(), Classifier()
+    return FeatureExtractor(), DifferenceClassifier()
 
 def get_loss():
     return nn.CrossEntropyLoss()
@@ -44,6 +44,35 @@ def post_processing(outs):
 
 def accuracy(lbls, preds):
     return torch.sum(lbls == preds).item()
+
+def pre_get_diff_abs(inps, lbls, device):
+    with torch.no_grad():
+        inp_1 = inps[0]
+        inp_2 = inps[1]
+        lbl_1 = lbls[0]
+        lbl_2 = lbls[1]
+
+        if lbl_1 < lbl_2:
+            inp_2, inp_1 = inp_1, inp_2
+            lbl_1, lbl_2 = lbl_2, lbl_1
+
+        inp_1 = inp_1[None, :, :, :]
+        inp_2 = inp_2[None, :, :, :]
+        
+        lbls = torch.Tensor([abs(lbl_1 - lbl_2)]).long().to(device)
+        lbl_1 = torch.Tensor([lbl_1]).long().to(device)
+        lbl_2 = torch.Tensor([lbl_2]).long().to(device)
+    return inp_1, inp_2, lbls
+
+def pre_get_diff(inps, lbls, device):
+    with torch.no_grad():
+        inp_1 = inps[0][None, :, :, :]
+        inp_2 = inps[1][None, :, :, :]
+        lbl_1 = lbls[0]
+        lbl_2 = lbls[1]
+        lbls = torch.Tensor([abs(lbl_1 - lbl_2)]).long().to(device)
+        lbl_signs = torch.Tensor([(np.random.rand() > 0.5) if (lbl_1 == lbl_2) else (lbl_1 > lbl_2)]).long().to(device)
+    return inp_1, inp_2, lbls, lbl_signs
 
 def train_phase(net, dataloader, optimizer, criterion, log_step, device):
     fe, cl = net
@@ -61,22 +90,7 @@ def train_phase(net, dataloader, optimizer, criterion, log_step, device):
         inps = inps.to(device)
         lbls = lbls.to(device)
 
-        with torch.no_grad():
-            inp_1 = inps[0]
-            inp_2 = inps[1]
-            lbl_1 = lbls[0]
-            lbl_2 = lbls[1]
-
-            if lbl_1 < lbl_2:
-                inp_2, inp_1 = inp_1, inp_2
-                lbl_1, lbl_2 = lbl_2, lbl_1
-
-            inp_1 = inp_1[None, :, :, :]
-            inp_2 = inp_2[None, :, :, :]
-            
-            lbls = torch.Tensor([abs(lbl_1 - lbl_2)]).long().to(device)
-            lbl_1 = torch.Tensor([lbl_1]).long().to(device)
-            lbl_2 = torch.Tensor([lbl_2]).long().to(device)
+        inp_1, inp_2, lbls, lbl_signs = pre_get_diff(inps, lbls, device)
 
         # Clear out gradients from previous iteration
         fe_opt.zero_grad()
@@ -84,11 +98,10 @@ def train_phase(net, dataloader, optimizer, criterion, log_step, device):
         # Get network outputs
         out_1 = fe(inp_1)
         out_2 = fe(inp_2)
-        # outs = cl(torch.cat([out_1, out_2], dim=1))
-        outs = cl(out_1 - out_2)
+        # outs, signs = cl(torch.cat([out_1, out_2], dim=1))
+        outs, signs = cl(out_1 - out_2)
         # Calculate the loss
-        loss = criterion(outs, lbls)
-        # loss += 0.01 * (criterion(out_1, lbl_1) + criterion(out_2, lbl_2))
+        loss = criterion(outs, lbls) + nn.BCEWithLogitsLoss()(signs, lbl_signs[None, :].float())
         # Calculate the gradients
         loss.backward()
         # Performing backpropagation
@@ -100,9 +113,10 @@ def train_phase(net, dataloader, optimizer, criterion, log_step, device):
 
         # Post processing the outputs
         preds = post_processing(outs.detach())
+        pred_signs = signs.detach().item() > 0.5
         
         # Update metrics
-        running_acc += accuracy(lbls, preds) / len(lbls)
+        running_acc += accuracy(lbls, preds) / len(lbls) if pred_signs == lbl_signs.item() else 0.0
 
         # Log in interval
         if (i + 1) % log_step == 0:
@@ -130,41 +144,26 @@ def val_phase(net, dataloader, criterion, logger, device):
             inps = inps.to(device)
             lbls = lbls.to(device)
 
-            with torch.no_grad():
-                inp_1 = inps[0]
-                inp_2 = inps[1]
-                lbl_1 = lbls[0]
-                lbl_2 = lbls[1]
-
-                if lbl_1 < lbl_2:
-                    inp_2, inp_1 = inp_1, inp_2
-                    lbl_1, lbl_2 = lbl_2, lbl_1
-
-                inp_1 = inp_1[None, :, :, :]
-                inp_2 = inp_2[None, :, :, :]
-
-                lbls = torch.Tensor([abs(lbl_1 - lbl_2)]).long().to(device)
-                lbl_1 = torch.Tensor([lbl_1]).long().to(device)
-                lbl_2 = torch.Tensor([lbl_2]).long().to(device)
+            inp_1, inp_2, lbls, lbl_signs = pre_get_diff(inps, lbls, device)
 
             # Get network outputs
             out_1 = fe(inp_1)
             out_2 = fe(inp_2)
-            # outs = cl(torch.cat([out_1, out_2], dim=1))
-            outs = cl(out_1 - out_2)
+            # outs, signs = cl(torch.cat([out_1, out_2], dim=1))
+            outs, signs = cl(out_1 - out_2)
             
             # Calculate the loss
-            loss = criterion(outs, lbls)
-            # loss += 0.01 * (criterion(out_1, lbl_1) + criterion(out_2, lbl_2))
+            loss = criterion(outs, lbls) + nn.BCEWithLogitsLoss()(signs, lbl_signs[None,:].float())
             
             # Update loss
             _loss += loss.item()
 
             # Post processing outputs
             preds = post_processing(outs)
+            pred_signs = signs.detach().item() > 0.5
 
             # Update metrics
-            _acc += accuracy(lbls, preds)
+            _acc += accuracy(lbls, preds) / len(lbls) if pred_signs == lbl_signs.item() else 0.0
 
     # Calculate evaluation result
     datasize = len(dataloader.dataset) // 2
@@ -195,15 +194,18 @@ def main():
     fe = fe.to(dev)
     cl = cl.to(dev)
 
+    pretrained = torch.load('weights/best_loss__.pth', map_location=dev_id)
+    fe.load_state_dict(pretrained['fe_state_dict'])
+
     # Define loss
     criterion = get_loss()
 
     # Define optim
     fe_opt = optim.SGD(fe.parameters(), 
-                       lr=0.0001, 
+                       lr=0.00001, 
                        momentum=0.99)
     cl_opt = optim.SGD(cl.parameters(), 
-                       lr=0.0001, 
+                       lr=0.00001, 
                        momentum=0.99)
     
     # Define learning rate scheduler

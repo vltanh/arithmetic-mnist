@@ -34,14 +34,46 @@ class FeatureExtractor(nn.Module):
 
         return x
 
-class Classifier(nn.Module):
+class DiffValueClassifier(nn.Module):
+    def __init__(self, in_features):
+        super().__init__()
+        self.fc1 = nn.Linear(in_features=in_features, out_features=128)
+        self.fc2 = nn.Linear(in_features=128, out_features=10)
+    
+    def forward(self, x):
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.fc2(x)
+        return x
+
+class DiffSignClassifier(nn.Module):
+    def __init__(self, in_features):
+        super().__init__()
+        self.fc1 = nn.Linear(in_features=in_features, out_features=1)
+    
+    def forward(self, x):
+        x = self.fc1(x)
+        return x
+
+class DifferenceClassifier(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.val_fc = DiffValueClassifier(128)
+        self.sign_fc = DiffSignClassifier(128)
+    
+    def forward(self, x):
+        val = self.val_fc(x)
+        sign = self.sign_fc(x)
+        return val, sign
+
+class DigitClassifier(nn.Module):
     def __init__(self):
         super().__init__()
 
-        # self.feature_extractor = FeatureExtractor()
+        self.feature_extractor = FeatureExtractor()
         self.fc1 = nn.Linear(in_features=128, out_features=10)
     
     def forward(self, x):
-        # x = self.feature_extractor(x)
+        x = self.feature_extractor(x)
         x = self.fc1(x)
         return x

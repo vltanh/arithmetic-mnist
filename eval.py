@@ -1,5 +1,6 @@
 import time
 import matplotlib.pyplot as plt
+import os
 
 import torch
 from torch.utils import data
@@ -7,7 +8,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from dataset import MNISTDataset
-from model import Classifier, FeatureExtractor
+from model import DifferenceClassifier, FeatureExtractor
 
 def get_dataset():
     datasets = dict()
@@ -30,7 +31,7 @@ def get_dataset():
     return dataloaders
 
 def get_network():
-    return FeatureExtractor(), Classifier()
+    return FeatureExtractor(), DifferenceClassifier()
 
 def get_loss():
     return nn.CrossEntropyLoss()
@@ -43,6 +44,8 @@ def accuracy(lbls, preds):
     return torch.sum(lbls == preds).item()
 
 def val_phase(net, dataloader, criterion, output_path, device):
+    os.system(f'mkdir -p {output_path}')
+
     fe, cl = net
 
     # No calculating gradients
@@ -143,7 +146,7 @@ def main():
 
     # Validate on val dataset
     val_phase(net=[fe, cl],
-             dataloader=dataloaders['val'],
+             dataloader=dataloaders['test'],
              criterion=criterion,
              output_path='visualization',
              device=dev)

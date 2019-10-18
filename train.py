@@ -291,11 +291,11 @@ def main():
         }
 
         if val_loss < logger['best']['val_loss']:
-            torch.save(save_info, 'weights/best_loss.pth')
+            torch.save(save_info, 'weights/diff_best_loss.pth')
             logger['best']['val_loss'] = val_loss
 
         if val_acc > logger['best']['val_acc']:
-            torch.save(save_info, 'weights/best_acc.pth')
+            torch.save(save_info, 'weights/diff_best_acc.pth')
             logger['best']['val_acc'] = val_acc
 
         # --------------------------------------------------------------

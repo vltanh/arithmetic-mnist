@@ -39,9 +39,12 @@ class Classifier(nn.Module):
         super().__init__()
 
         # self.feature_extractor = FeatureExtractor()
-        self.fc1 = nn.Linear(in_features=128, out_features=10)
-    
+        self.fc1 = nn.Linear(in_features=128, out_features=128)
+        self.fc2 = nn.Linear(in_features=128, out_features=10)
+
     def forward(self, x):
         # x = self.feature_extractor(x)
         x = self.fc1(x)
+        x = F.relu(x)
+        x = self.fc2(x)
         return x

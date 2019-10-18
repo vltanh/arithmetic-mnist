@@ -1,6 +1,7 @@
 import time
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 
 import torch
 from torch.utils import data
@@ -9,7 +10,7 @@ from torch import optim
 from torch.nn import functional as F
 
 from dataset import MNISTDataset
-from model import Classifier
+from model import Classifier, FeatureExtractor
 
 def get_dataset():
     datasets = dict()
@@ -29,7 +30,7 @@ def get_dataset():
     return dataloaders
 
 def get_network():
-    return Classifier()
+    return FeatureExtractor(), Classifier()
 
 def get_loss():
     return nn.CrossEntropyLoss()
@@ -42,27 +43,32 @@ def accuracy(lbls, preds):
     return torch.sum(lbls == preds).item()
 
 def train_phase(net, dataloader, optimizer, criterion, log_step, device):
+    fe, cl = net
+    fe_opt, cl_opt = optimizer
+    
     # Record loss and metrics during training
     running_loss = 0.0
     running_acc = 0.0
 
     # Start training
-    net.train()
+    fe.train(); cl.train()
     for i, (inps, lbls) in enumerate(dataloader):
         # Load inputs and labels
         inps = inps.to(device)
         lbls = lbls.to(device)
 
         # Clear out gradients from previous iteration
-        optimizer.zero_grad()
+        fe_opt.zero_grad()
+        cl_opt.zero_grad()
         # Get network outputs
-        outs = net(inps)
+        inps = fe(inps)
+        outs = cl(inps)
         # Calculate the loss
         loss = criterion(outs, lbls)
         # Calculate the gradients
         loss.backward()
         # Performing backpropagation
-        optimizer.step()
+        fe_opt.step(); cl_opt.step()
         
         # Update loss
         running_loss += loss.item()
@@ -81,6 +87,7 @@ def train_phase(net, dataloader, optimizer, criterion, log_step, device):
             running_acc = 0.0
 
 def val_phase(net, dataloader, criterion, logger, device):
+    fe, cl = net
     # No calculating gradients
     with torch.no_grad():
         start = time.time()
@@ -90,14 +97,15 @@ def val_phase(net, dataloader, criterion, logger, device):
         _acc = 0.0
         
         # Start validating
-        net.eval()
+        fe.eval(); cl.eval()
         for i, (inps, lbls) in enumerate(dataloader):
             # Load inputs and labels
             inps = inps.to(device)
             lbls = lbls.to(device)
             
             # Get network outputs
-            outs = net(inps)
+            inps = fe(inps)
+            outs = cl(inps)
             
             # Calculate the loss
             loss = criterion(outs, lbls)
@@ -136,21 +144,28 @@ def main():
     dataloaders = get_dataset()
 
     # Define network
-    net = get_network().to(dev)
-    print(net)
+    fe, cl = get_network()
+    fe = fe.to(dev)
+    cl = cl.to(dev)
 
     # Define loss
     criterion = get_loss()
 
     # Define optim
-    optimizer = optim.SGD(net.parameters(), 
-                          lr=0.0001, 
-                          momentum=0.99)
+    fe_opt = optim.SGD(fe.parameters(), 
+                       lr=0.0001, 
+                       momentum=0.99)
+    cl_opt = optim.SGD(cl.parameters(), 
+                       lr=0.0001, 
+                       momentum=0.99)
     
     # Define learning rate scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 
-                                                     patience=5, 
-                                                     verbose=True)
+    fe_scheduler = optim.lr_scheduler.ReduceLROnPlateau(fe_opt, 
+                                                        patience=3, 
+                                                        verbose=True)
+    cl_scheduler = optim.lr_scheduler.ReduceLROnPlateau(cl_opt, 
+                                                        patience=3, 
+                                                        verbose=True)
 
     # Prepare logger
     logger = dict()
@@ -177,9 +192,9 @@ def main():
         print('Start [training].')
         start = time.time()
         
-        train_phase(net=net, 
+        train_phase(net=[fe, cl], 
                     dataloader=dataloaders['train'], 
-                    optimizer=optimizer,
+                    optimizer=[fe_opt, cl_opt],
                     criterion=criterion,
                     log_step=100,
                     device=dev)
@@ -194,14 +209,14 @@ def main():
         start = time.time()
         
         # Validate on train dataset
-        val_phase(net=net,
+        val_phase(net=[fe, cl],
                  dataloader=dataloaders['train'],
                  criterion=criterion,
                  logger=logger['train'],
                  device=dev)
         
         # Validate on val dataset
-        val_phase(net=net,
+        val_phase(net=[fe, cl],
                  dataloader=dataloaders['val'],
                  criterion=criterion,
                  logger=logger['val'],
@@ -216,7 +231,36 @@ def main():
         # --------------------------------------------------------------s
         
         # Learning rate scheduling based on last val_loss
-        scheduler.step(val_loss)
+        fe_scheduler.step(val_loss)
+        cl_scheduler.step(val_loss)
+
+        # --------------------------------------------------------------
+
+        save_info = {
+            'fe_state_dict': fe.state_dict(),
+            'fe_opt_state_dict': fe_opt.state_dict(),
+            'cl_state_dict': cl.state_dict(),
+            'cl_opt_state_dict': cl_opt.state_dict()
+        }
+
+        if val_loss < logger['best']['val_loss']:
+            torch.save(save_info, 'weights/cl_best_loss.pth')
+            logger['best']['val_loss'] = val_loss
+
+        if val_acc > logger['best']['val_acc']:
+            torch.save(save_info, 'weights/cl_best_acc.pth')
+            logger['best']['val_acc'] = val_acc
+
+        # --------------------------------------------------------------
+        
+        # Plot training graph
+        for metric in ['loss', 'acc']:
+            plt.figure()
+            plt.plot(range(len(logger['train'][metric])), logger['train'][metric])
+            plt.plot(range(len(logger['val'][metric])), logger['val'][metric])
+            plt.legend(['train', 'val'])
+            plt.savefig(os.path.join('logs', f'{metric}'))
+            plt.close()
 
 if __name__ == "__main__":
     try:

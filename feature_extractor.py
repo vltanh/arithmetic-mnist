@@ -9,7 +9,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from dataset import MNISTDataset
-from model import Classifier, FeatureExtractor
+from model import FeatureExtractor
 
 def get_dataset():
     datasets = dict()
@@ -35,6 +35,7 @@ def get_network():
 
 def feature_extract(net, dataloader, output_path, device):
     dataset = dict()
+    dataset['data'] = []
     dataset['features'] = []
     dataset['labels'] = []
 
@@ -52,10 +53,11 @@ def feature_extract(net, dataloader, output_path, device):
             # Get network outputs
             outs = net(inps)
 
-            for out, lbl in zip(outs, lbls):
-                dataset['features'].append(out.detach().cpu().numpy())
-                dataset['labels'].append(lbl.item())
+            dataset['data'].extend(inps.detach().cpu().squeeze().view(4, -1).numpy())
+            dataset['features'].extend(outs.detach().cpu().numpy())
+            dataset['labels'].extend(lbls.detach().cpu().numpy())
     
+    dataset['data'] = np.array(dataset['data'])
     dataset['features'] = np.array(dataset['features'])
     dataset['labels'] = np.array(dataset['labels'])
     pickle.dump(dataset, open(output_path, 'wb'))
@@ -77,10 +79,11 @@ def main():
     fe.load_state_dict(pretrained['fe_state_dict'])
 
     # Validate on val dataset
-    feature_extract(net=fe,
-                    dataloader=dataloaders['train'],
-                    output_path='features/train.dat',
-                    device=dev)
+    for x in ['train', 'val', 'test']:
+        feature_extract(net=fe,
+                        dataloader=dataloaders[f'{x}'],
+                        output_path=f'features/{x}.dat',
+                        device=dev)
 
 if __name__ == "__main__":
     main()

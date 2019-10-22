@@ -34,14 +34,19 @@ def get_network():
     return FeatureExtractor(), DifferenceClassifier()
 
 def get_loss():
-    return nn.CrossEntropyLoss()
+    return nn.MSELoss()
 
 def post_processing(outs):
-    _, preds = torch.max(F.softmax(outs, dim=1), dim=1)
-    return preds
+    return outs
 
-def accuracy(lbls, preds):
-    return torch.sum(lbls == preds).item()
+def pre_get_diff(inps, lbls, device):
+    with torch.no_grad():
+        inp_1 = inps[0][None, :, :, :]
+        inp_2 = inps[1][None, :, :, :]
+        lbl_1 = lbls[0]
+        lbl_2 = lbls[1]
+        lbls = torch.Tensor([lbl_1 - lbl_2]).to(device)[None, :]
+    return inp_1, inp_2, lbls
 
 def val_phase(net, dataloader, criterion, output_path, device):
     os.system(f'mkdir -p {output_path}')
@@ -54,7 +59,6 @@ def val_phase(net, dataloader, criterion, output_path, device):
         
         # Record loss and metrics
         _loss = 0.0
-        _acc = 0.0
         
         # Start validating
         fe.eval()
@@ -64,22 +68,7 @@ def val_phase(net, dataloader, criterion, output_path, device):
             inps = inps.to(device)
             lbls = lbls.to(device)
 
-            with torch.no_grad():
-                inp_1 = inps[0]
-                inp_2 = inps[1]
-                lbl_1 = lbls[0]
-                lbl_2 = lbls[1]
-
-                if lbl_1 < lbl_2:
-                    inp_2, inp_1 = inp_1, inp_2
-                    lbl_1, lbl_2 = lbl_2, lbl_1
-
-                inp_1 = inp_1[None, :, :, :]
-                inp_2 = inp_2[None, :, :, :]
-
-                lbls = torch.Tensor([abs(lbl_1 - lbl_2)]).long().to(device)
-                lbl_1 = torch.Tensor([lbl_1]).long().to(device)
-                lbl_2 = torch.Tensor([lbl_2]).long().to(device)
+            inp_1, inp_2, lbls = pre_get_diff(inps, lbls, device)
 
             # Get network outputs
             out_1 = fe(inp_1)
@@ -89,25 +78,17 @@ def val_phase(net, dataloader, criterion, output_path, device):
             
             # Calculate the loss
             loss = criterion(outs, lbls)
-            # loss += 0.01 * (criterion(out_1, lbl_1) + criterion(out_2, lbl_2))
-            
+
             # Update loss
             _loss += loss.item()
 
             # Post processing outputs
-            pred_1 = post_processing(cl(out_1))
-            pred_2 = post_processing(cl(out_2))
             preds = post_processing(outs)
-
-            # Update metrics
-            _acc += accuracy(lbls, preds)
 
             plt.subplot(1, 2, 1)
             plt.imshow(inp_1.detach().cpu().squeeze())
-            plt.title(f'{pred_1.item()}')
             plt.subplot(1, 2, 2)
             plt.imshow(inp_2.detach().cpu().squeeze())
-            plt.title(f'{pred_2.item()}')
             plt.suptitle(f'{preds.item()}')
             plt.savefig(f'{output_path}/{i:04d}')
             plt.close()
@@ -116,13 +97,11 @@ def val_phase(net, dataloader, criterion, output_path, device):
     datasize = len(dataloader.dataset) // 2
     avg_pred_time = (time.time() - start) / datasize
     avg_loss = _loss / datasize
-    avg_acc = _acc / datasize
     
     # Print results
     print('-' * 20)
     print('Average prediction time: {} (s)'.format(avg_pred_time))
     print('Loss:', avg_loss)
-    print('Acc:', avg_acc)
 
 def main():
     # Specify device
@@ -137,7 +116,7 @@ def main():
     fe = fe.to(dev)
     cl = cl.to(dev)
 
-    pretrained = torch.load('weights/best_loss__.pth', map_location=dev_id)
+    pretrained = torch.load('weights/mse_best_loss.pth', map_location=dev_id)
     fe.load_state_dict(pretrained['fe_state_dict'])
     cl.load_state_dict(pretrained['cl_state_dict'])
 
@@ -146,7 +125,7 @@ def main():
 
     # Validate on val dataset
     val_phase(net=[fe, cl],
-             dataloader=dataloaders['test'],
+             dataloader=dataloaders['val'],
              criterion=criterion,
              output_path='visualization',
              device=dev)

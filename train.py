@@ -10,7 +10,7 @@ from torch import optim
 from torch.nn import functional as F
 
 from dataset import MNISTDataset
-from model import DifferenceClassifier, DigitClassifier, FeatureExtractor
+from model import DifferenceClassifier, FeatureExtractor
 
 def get_dataset():
     datasets = dict()
@@ -36,33 +36,7 @@ def get_network():
     return FeatureExtractor(), DifferenceClassifier()
 
 def get_loss():
-    return nn.CrossEntropyLoss()
-
-def post_processing(outs):
-    _, preds = torch.max(F.softmax(outs, dim=1), dim=1)
-    return preds
-
-def accuracy(lbls, preds):
-    return torch.sum(lbls == preds).item()
-
-def pre_get_diff_abs(inps, lbls, device):
-    with torch.no_grad():
-        inp_1 = inps[0]
-        inp_2 = inps[1]
-        lbl_1 = lbls[0]
-        lbl_2 = lbls[1]
-
-        if lbl_1 < lbl_2:
-            inp_2, inp_1 = inp_1, inp_2
-            lbl_1, lbl_2 = lbl_2, lbl_1
-
-        inp_1 = inp_1[None, :, :, :]
-        inp_2 = inp_2[None, :, :, :]
-        
-        lbls = torch.Tensor([abs(lbl_1 - lbl_2)]).long().to(device)
-        lbl_1 = torch.Tensor([lbl_1]).long().to(device)
-        lbl_2 = torch.Tensor([lbl_2]).long().to(device)
-    return inp_1, inp_2, lbls
+    return nn.MSELoss()
 
 def pre_get_diff(inps, lbls, device):
     with torch.no_grad():
@@ -70,9 +44,8 @@ def pre_get_diff(inps, lbls, device):
         inp_2 = inps[1][None, :, :, :]
         lbl_1 = lbls[0]
         lbl_2 = lbls[1]
-        lbls = torch.Tensor([abs(lbl_1 - lbl_2)]).long().to(device)
-        lbl_signs = torch.Tensor([(np.random.rand() > 0.5) if (lbl_1 == lbl_2) else (lbl_1 > lbl_2)]).long().to(device)
-    return inp_1, inp_2, lbls, lbl_signs
+        lbls = torch.Tensor([lbl_1 - lbl_2]).to(device)[None, :]
+    return inp_1, inp_2, lbls
 
 def train_phase(net, dataloader, optimizer, criterion, log_step, device):
     fe, cl = net
@@ -80,7 +53,6 @@ def train_phase(net, dataloader, optimizer, criterion, log_step, device):
 
     # Record loss and metrics during training
     running_loss = 0.0
-    running_acc = 0.0
 
     # Start training
     fe.train()
@@ -90,7 +62,7 @@ def train_phase(net, dataloader, optimizer, criterion, log_step, device):
         inps = inps.to(device)
         lbls = lbls.to(device)
 
-        inp_1, inp_2, lbls, lbl_signs = pre_get_diff(inps, lbls, device)
+        inp_1, inp_2, lbls = pre_get_diff(inps, lbls, device)
 
         # Clear out gradients from previous iteration
         fe_opt.zero_grad()
@@ -99,9 +71,9 @@ def train_phase(net, dataloader, optimizer, criterion, log_step, device):
         out_1 = fe(inp_1)
         out_2 = fe(inp_2)
         # outs, signs = cl(torch.cat([out_1, out_2], dim=1))
-        outs, signs = cl(out_1 - out_2)
+        outs = cl(out_1 - out_2)
         # Calculate the loss
-        loss = criterion(outs, lbls) + nn.BCEWithLogitsLoss()(signs, lbl_signs[None, :].float())
+        loss = criterion(outs, lbls)
         # Calculate the gradients
         loss.backward()
         # Performing backpropagation
@@ -111,19 +83,11 @@ def train_phase(net, dataloader, optimizer, criterion, log_step, device):
         # Update loss
         running_loss += loss.item()
 
-        # Post processing the outputs
-        preds = post_processing(outs.detach())
-        pred_signs = signs.detach().item() > 0.5
-        
-        # Update metrics
-        running_acc += accuracy(lbls, preds) / len(lbls) if pred_signs == lbl_signs.item() else 0.0
-
         # Log in interval
         if (i + 1) % log_step == 0:
-            print('Iter {:>5d}, loss: {:.5f}, acc: {:.5f}'.format(
-                i + 1, running_loss / log_step, running_acc / log_step))
+            print('Iter {:>5d}, loss: {:.5f}'.format(
+                i + 1, running_loss / log_step))
             running_loss = 0.0
-            running_acc = 0.0
 
 def val_phase(net, dataloader, criterion, logger, device):
     fe, cl = net
@@ -134,8 +98,7 @@ def val_phase(net, dataloader, criterion, logger, device):
         
         # Record loss and metrics
         _loss = 0.0
-        _acc = 0.0
-        
+
         # Start validating
         fe.eval()
         cl.eval()
@@ -144,42 +107,32 @@ def val_phase(net, dataloader, criterion, logger, device):
             inps = inps.to(device)
             lbls = lbls.to(device)
 
-            inp_1, inp_2, lbls, lbl_signs = pre_get_diff(inps, lbls, device)
+            inp_1, inp_2, lbls = pre_get_diff(inps, lbls, device)
 
             # Get network outputs
             out_1 = fe(inp_1)
             out_2 = fe(inp_2)
             # outs, signs = cl(torch.cat([out_1, out_2], dim=1))
-            outs, signs = cl(out_1 - out_2)
+            outs = cl(out_1 - out_2)
             
             # Calculate the loss
-            loss = criterion(outs, lbls) + nn.BCEWithLogitsLoss()(signs, lbl_signs[None,:].float())
+            loss = criterion(outs, lbls)
             
             # Update loss
             _loss += loss.item()
-
-            # Post processing outputs
-            preds = post_processing(outs)
-            pred_signs = signs.detach().item() > 0.5
-
-            # Update metrics
-            _acc += accuracy(lbls, preds) / len(lbls) if pred_signs == lbl_signs.item() else 0.0
 
     # Calculate evaluation result
     datasize = len(dataloader.dataset) // 2
     avg_pred_time = (time.time() - start) / datasize
     avg_loss = _loss / datasize
-    avg_acc = _acc / datasize
     
     # Print results
     print('-' * 20)
     print('Average prediction time: {} (s)'.format(avg_pred_time))
     print('Loss:', avg_loss)
-    print('Acc:', avg_acc)
     
     # Log loss and metrics
     logger['loss'].append(avg_loss)
-    logger['acc'].append(avg_acc)
 
 def main():
     # Specify device
@@ -193,9 +146,6 @@ def main():
     fe, cl = get_network()
     fe = fe.to(dev)
     cl = cl.to(dev)
-
-    pretrained = torch.load('weights/best_loss__.pth', map_location=dev_id)
-    fe.load_state_dict(pretrained['fe_state_dict'])
 
     # Define loss
     criterion = get_loss()
@@ -221,10 +171,8 @@ def main():
     for phase in ['train', 'val']:
         logger[phase] = dict()
         logger[phase]['loss'] = []
-        logger[phase]['acc'] = []
     logger['best'] = dict()
     logger['best']['val_loss'] = 100000.0
-    logger['best']['val_acc'] = 0.0
     
     # -----------------------------------------------------------------
     
@@ -275,7 +223,6 @@ def main():
         
         # Getting val_loss and val_acc for this epoch
         val_loss = logger['val']['loss'][-1]
-        val_acc = logger['val']['acc'][-1]
         
         # --------------------------------------------------------------
         
@@ -293,17 +240,13 @@ def main():
         }
 
         if val_loss < logger['best']['val_loss']:
-            torch.save(save_info, 'weights/best_loss.pth')
+            torch.save(save_info, 'weights/mse_best_loss.pth')
             logger['best']['val_loss'] = val_loss
-
-        if val_acc > logger['best']['val_acc']:
-            torch.save(save_info, 'weights/best_acc.pth')
-            logger['best']['val_acc'] = val_acc
 
         # --------------------------------------------------------------
         
         # Plot training graph
-        for metric in ['loss', 'acc']:
+        for metric in ['loss']:
             plt.figure()
             plt.plot(range(len(logger['train'][metric])), logger['train'][metric])
             plt.plot(range(len(logger['val'][metric])), logger['val'][metric])

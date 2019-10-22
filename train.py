@@ -180,7 +180,7 @@ def main():
     # -----------------------------------------------------------------
     
     # Start training loop
-    nepochs = 1
+    nepochs = 10
     for epoch in range(nepochs):
         print('=' * 30)
         print('Epoch {:>3d}'.format(epoch))
